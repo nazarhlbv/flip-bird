@@ -1,0 +1,173 @@
+<!DOCTYPE html>
+<html lang="uk">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>Flip Bird Ultra Edition</title>
+    <script src="https://cdn.jsdelivr.net/npm/phaser@3.60.0/dist/phaser-arcade-physics.min.js"></script>
+    <style>
+        body { margin: 0; background: #000; overflow: hidden; display: flex; justify-content: center; align-items: center; height: 100vh; }
+        canvas { border-radius: 15px; box-shadow: 0 0 50px rgba(0,255,150,0.2); }
+    </style>
+</head>
+<body>
+
+<script>
+// --- СИНТЕЗАТОР ЗВУКІВ ---
+const AudioSynth = {
+    ctx: new (window.AudioContext || window.webkitAudioContext)(),
+    play(type) {
+        const osc = this.ctx.createOscillator();
+        const gain = this.ctx.createGain();
+        osc.connect(gain);
+        gain.connect(this.ctx.destination);
+
+        const now = this.ctx.currentTime;
+        if (type === 'flap') {
+            osc.type = 'triangle';
+            osc.frequency.setValueAtTime(150, now);
+            osc.frequency.exponentialRampToValueAtTime(400, now + 0.1);
+            gain.gain.setValueAtTime(0.3, now);
+            gain.gain.exponentialRampToValueAtTime(0.01, now + 0.1);
+            osc.start(); osc.stop(now + 0.1);
+        } else if (type === 'score') {
+            osc.type = 'sine';
+            osc.frequency.setValueAtTime(600, now);
+            osc.frequency.exponentialRampToValueAtTime(900, now + 0.1);
+            gain.gain.setValueAtTime(0.2, now);
+            gain.gain.exponentialRampToValueAtTime(0.01, now + 0.2);
+            osc.start(); osc.stop(now + 0.2);
+        } else if (type === 'hit') {
+            osc.type = 'sawtooth';
+            osc.frequency.setValueAtTime(100, now);
+            osc.frequency.linearRampToValueAtTime(40, now + 0.3);
+            gain.gain.setValueAtTime(0.5, now);
+            gain.gain.linearRampToValueAtTime(0.01, now + 0.3);
+            osc.start(); osc.stop(now + 0.3);
+        }
+    }
+};
+
+const config = {
+    type: Phaser.AUTO,
+    scale: { mode: Phaser.Scale.FIT, autoCenter: Phaser.Scale.CENTER_BOTH, width: 450, height: 800 },
+    physics: { default: 'arcade', arcade: { gravity: { y: 1400 } } },
+    scene: { preload: preload, create: create, update: update }
+};
+
+const game = new Phaser.Game(config);
+let bird, pipes, scoreText, highscore, particles, gameState = 'START';
+
+function preload() {}
+
+function create() {
+    const graphics = this.make.graphics({ x: 0, y: 0, add: false });
+
+    // Пташка
+    graphics.fillStyle(0xFFD700).fillCircle(20, 20, 20).lineStyle(3, 0x000000).strokeCircle(20, 20, 20);
+    graphics.fillStyle(0xffffff).fillCircle(30, 15, 7);
+    graphics.fillStyle(0x000000).fillCircle(33, 15, 3);
+    graphics.generateTexture('bird', 40, 40);
+    graphics.clear();
+
+    // Труби
+    graphics.fillStyle(0x2ecc71).fillRect(0, 0, 80, 600).lineStyle(4, 0x000000).strokeRect(0, 0, 80, 600);
+    graphics.generateTexture('pipe', 80, 600);
+    
+    // Ефекти
+    graphics.clear().fillStyle(0xffffff).fillRect(0, 0, 6, 6);
+    graphics.generateTexture('p', 6, 6);
+
+    // Фон (Градієнт)
+    this.add.rectangle(225, 400, 450, 800, 0x4ec0ca).setDepth(-1);
+
+    // Пташка та фізика
+    bird = this.physics.add.sprite(100, 400, 'bird').setCircle(18).setDepth(5);
+    bird.body.allowGravity = false;
+    pipes = this.physics.add.group();
+
+    particles = this.add.particles(0, 0, 'p', {
+        speed: 200, scale: { start: 1, end: 0 }, lifespan: 600, emitting: false
+    });
+
+    // Текст
+    highscore = localStorage.getItem('best_score') || 0;
+    scoreText = this.add.text(225, 120, 'FLIP BIRD\nТОРКНИСЬ', { 
+        fontSize: '50px', fontStyle: 'bold', align: 'center', stroke: '#000', strokeThickness: 8 
+    }).setOrigin(0.5);
+
+    this.input.on('pointerdown', jump, this);
+    this.physics.add.overlap(bird, pipes, hit, null, this);
+}
+
+function jump() {
+    if (gameState === 'START') {
+        gameState = 'PLAYING';
+        bird.body.allowGravity = true;
+        this.score = 0;
+        scoreText.setText('0');
+        this.timer = this.time.addEvent({ delay: 1500, callback: spawnPipes, callbackScope: this, loop: true });
+    }
+
+    if (gameState === 'PLAYING') {
+        bird.setVelocityY(-450);
+        this.tweens.add({ targets: bird, angle: -30, duration: 100 });
+        AudioSynth.play('flap');
+    } else if (gameState === 'GAMEOVER') {
+        this.scene.restart();
+        gameState = 'START';
+    }
+}
+
+function spawnPipes() {
+    const gap = 180 - Math.min(this.score, 60);
+    const pos = Phaser.Math.Between(200, 600);
+    const speed = -250 - (this.score * 3);
+
+    const top = pipes.create(550, pos - gap/2, 'pipe').setOrigin(0.5, 1);
+    const bot = pipes.create(550, pos + gap/2, 'pipe').setOrigin(0.5, 0);
+    
+    top.body.allowGravity = bot.body.allowGravity = false;
+    top.setVelocityX(speed); bot.setVelocityX(speed);
+    top.passed = false;
+}
+
+function update() {
+    if (gameState === 'PLAYING') {
+        if (bird.angle < 40) bird.angle += 2;
+        if (bird.y > 800 || bird.y < 0) hit.call(this);
+
+        pipes.getChildren().forEach(p => {
+            if (!p.passed && p.x < bird.x) {
+                p.passed = true;
+                if (p.originY === 1) {
+                    this.score++;
+                    scoreText.setText(this.score);
+                    AudioSynth.play('score');
+                }
+            }
+            if (p.x < -100) p.destroy();
+        });
+    } else if (gameState === 'START') {
+        bird.y = 400 + Math.sin(this.time.now / 150) * 15;
+    }
+}
+
+function hit() {
+    if (gameState === 'GAMEOVER') return;
+    gameState = 'GAMEOVER';
+    AudioSynth.play('hit');
+    this.cameras.main.shake(300, 0.03);
+    particles.emitParticleAt(bird.x, bird.y, 20);
+    this.physics.pause();
+    this.timer.remove();
+
+    if (this.score > highscore) {
+        highscore = this.score;
+        localStorage.setItem('best_score', highscore);
+    }
+    scoreText.setText(`GAME OVER\nРЕКОРД: ${highscore}\nРАХУНОК: ${this.score}`);
+}
+</script>
+</body>
+</html>
